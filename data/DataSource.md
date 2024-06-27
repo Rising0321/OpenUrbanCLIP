@@ -3,9 +3,13 @@
 ## 1. Task Data
 ## 1.1 GDP Data
 
+Grid： 1km x 1km
+
 https://github.com/thestarlab/ChinaGDP/tree/master 
 
 ## 1.2 Carbon Data
+
+Grid：1km x 1km
 
 https://db.cger.nies.go.jp/dataset/ODIAC/DL_odiac2023.html
 
@@ -13,7 +17,7 @@ https://db.cger.nies.go.jp/dataset/ODIAC/DL_odiac2023.html
 
 Corrdinate: WGS84
 
-Length: 3 Arc
+Grid：3 Arc
 
 https://hub.worldpop.org/geodata/summary?id=49730 
 
