@@ -1,3 +1,5 @@
 .idea/*
 log_buaa.py
-data/task_data
+data/task_data/China_GDP_2020.img
+data/task_data/chn_ppp_2020_constrained.tif
+data/task_data/odiac2023_1km_excl_intl_2004.tif
