@@ -1,5 +1,17 @@
 .idea/*
 log_buaa.py
+
 data/task_data/China_GDP_2020.img
 data/task_data/chn_ppp_2020_constrained.tif
 data/task_data/odiac2023_1km_excl_intl_2004.tif
+
+data/image_data/Beijing
+data/image_data/Guangzhou
+data/image_data/Shanghai
+data/image_data/Shenzhen
+
+data/task_data/Beijing
+data/task_data/Guangzhou
+data/task_data/Shanghai
+data/task_data/Shenzhen
+

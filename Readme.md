@@ -31,3 +31,9 @@ In ppp_data_solver, the city and task should specifed by the parameter ''city'' 
 Run `image_donwnloader` in data/image_data to collect the image data
 
 In image_downloader, the city should specifed by the parameter ''place''.
+
+Please notice that this program can only run in the Windows system.
+
+## 4. Image Data Captioning
+
+
