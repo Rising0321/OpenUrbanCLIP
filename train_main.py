@@ -100,7 +100,6 @@ def train_one_epoch(model, criterion, data, epoch, optimizer, args, device):
 
 
 def eval(model, criterion, data, epoch, optimizer, args, device, phase):
-
     with torch.no_grad():
         model.eval()
 
@@ -159,14 +158,14 @@ def eval_best(model, args, data, criterion, epoch, optimizer):
 
 def init_model(args):
     model, _, transform = open_clip.create_model_and_transforms(
-        model_name="coca_ViT-L-14", pretrained=args.pretrained_model
+        model_name=args.model, pretrained=args.pretrained_model
     )
 
     model.to(args.device)
 
     logger.info("model parameters: {}".format(count_trainable_parameters(model)))
 
-    tokenizer = open_clip.get_tokenizer("coca_ViT-L-14")
+    tokenizer = open_clip.get_tokenizer(args.model)
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr
@@ -190,6 +189,9 @@ def main(args):
         args, transform, tokenizer
     )
 
+    save_path = f"./checkpoints/upstream/{args.model}-{args.name}"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
     best_clip_val_loss = float("inf")
 
     for epoch in range(args.epoch_num):
@@ -200,7 +202,6 @@ def main(args):
 
         cur_metrics = eval(model, criterion, data, epoch, optimizer, args, args.device, "val")
 
-
         if cur_metrics["clip_val_loss"] < best_clip_val_loss:
             print("--------------------enter saving mode--------------------")
             checkpoint_dict = {
@@ -210,15 +211,14 @@ def main(args):
             print("--------------------saving checkpoints--------------------")
             torch.save(
                 checkpoint_dict,
-                os.path.join("./checkpoints/upstream", "best_states.pt"),
+                os.path.join(save_path, "best_states.pt"),
             )
             print("--------------------saving state_dict--------------------")
             torch.save(
                 model.state_dict(),
-                os.path.join("./checkpoints/upstream", "best_model.bin"),
+                os.path.join(save_path, "best_model.bin"),
             )
             best_clip_val_loss = cur_metrics["clip_val_loss"]
-
 
     eval_best(model, args, data, criterion, 20010321, optimizer)
 
@@ -261,7 +261,9 @@ if __name__ == "__main__":
     # huggingface-cli download --resume-download laion/CLIP-ViT-B-32-laion2B-s34B-b79K --local-dir ./CLIP-ViT-B-32-laion2B-s34B-b79K
     # coca_ViT-L-14
     # huggingface-cli download --resume-download laion/mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k --local-dir ./mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k
-    # todo : model selection, coca or clip
+    parser.add_argument(
+        "--model", type=str, default="coca_ViT-L-14", help="model name"
+    )
     parser.add_argument(
         "--pretrained_model",
         type=str,
@@ -284,6 +286,9 @@ if __name__ == "__main__":
         type=str,
         default="cuda:1",
         help="cpu or gpu"
+    )
+    parser.add_argument(
+        "--name", type=str, default="test2", help="downstream name"
     )
     args = parser.parse_args()
 
