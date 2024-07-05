@@ -16,7 +16,7 @@ class CoCaDataset(Dataset):
         self.captions = []
         self.caption_tokens = []
         self.city = city
-        for item in tqdm(list_data):
+        for item in tqdm(list_data, desc="Loading data"):
             try:
                 im = Image.open(
                     item[0]
@@ -37,5 +37,4 @@ class CoCaDataset(Dataset):
         return len(self.captions)
 
     def __getitem__(self, index):
-        print(self.img_tensors[index], self.caption_tokens[index])
         return self.img_tensors[index], self.caption_tokens[index]

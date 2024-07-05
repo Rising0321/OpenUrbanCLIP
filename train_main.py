@@ -68,319 +68,69 @@ def create_datasets(args, transform, tokenizer):
     return data
 
 
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-def train_one_epoch(model, criterion, data, epoch, optimizer, args, logger):
-    """To train one epoch."""
-    device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
-
+def train_one_epoch(model, criterion, data, epoch, optimizer, args, device):
     model.train()
+
     dataloader = data["train_loader"]
-    num_batches_per_epoch = len(dataloader)
-    sample_digits = math.ceil(math.log(len(dataloader) * args.batch_size + 1, 10))
 
-    losses_m = {}
-    batch_time_m = AverageMeter()
-    data_time_m = AverageMeter()  # data loading time
-    end = time.time()
+    progress_bar = tqdm(dataloader)
 
-    batch_size = args.batch_size
-    total_batches = len(dataloader.dataset) // batch_size
-    if len(dataloader.dataset) % batch_size != 0:
-        total_batches += 1
+    progress_bar.set_description(f"Train Epoch {epoch}")
 
-    for batch_count, batch in tqdm(enumerate(dataloader), desc="Training: ", total=total_batches):
-        step = num_batches_per_epoch * epoch + batch_count
-        (
-            images,
-            texts,
-        ) = batch  # images: [batch_size, 3, 224, 224], texts: [batch_size, 77]
+    for batch in dataloader:
+        optimizer.zero_grad()
+
+        images, texts = batch
         images = images.to(device=device)
         texts = texts.to(device=device)
 
-        print(texts)
-
-        data_time_m.update(time.time() - end)
-
-        optimizer.zero_grad()
-        if texts.ndim == 3:  # torch.Size([batch_size, 1, 77])
+        if texts.ndim == 3:
             texts = texts.squeeze(1)
 
-        # print("images.shape: {}".format(images.shape))
-        # print("texts.shape: {}".format(texts.shape))
         model_out = model(images, texts)
-        """
-        return {
-            "image_features": image_latent,
-            "text_features": text_latent,
-            "logits": logits,
-            "labels": labels,
-            "logit_scale": self.logit_scale.exp()
-        }
-        """
-        logit_scale = model_out["logit_scale"]
-
         losses = criterion(**model_out, output_dict=True)
-        # {"contrastive_loss": clip_loss, "caption_loss": caption_loss}
-
         total_loss = sum(losses.values())
         losses["loss"] = total_loss
 
-        # backward(total_loss, scaler)
         total_loss.backward()
-
-        # if args.grad_clip_norm is not None:
-        #     torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
         optimizer.step()
-
-        # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
-
-        batch_time_m.update(time.time() - end)
-        end = time.time()
-        batch_count += 1
-        if step % args.log_every_n_steps == 0:
-            batch_size = len(images)
-            num_samples = step * batch_size
-            samples_per_epoch = (
-                    num_batches_per_epoch * batch_size
-            )  # sample size per epoch
-            percent_complete = 100.0 * batch_count / num_batches_per_epoch
-
-            # NOTE loss is coarsely sampled
-            for key, val in losses.items():
-                if key not in losses_m:
-                    losses_m[key] = AverageMeter()
-                losses_m[key].update(val.item(), batch_size)
-
-            logit_scale_scalar = logit_scale.item()
-            loss_log = " ".join(
-                [
-                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})"
-                    for loss_name, loss_m in losses_m.items()
-                ]
-            )
-            samples_per_second = batch_size / batch_time_m.val
-            logger.info(
-                f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
-                f"Data (t): {data_time_m.avg:.3f} "
-                f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, "
-                # f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
-            )
-
-            # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
-            log_data = {
-                "data_time": data_time_m.val,
-                "batch_time": batch_time_m.val,
-                "samples_per_second": samples_per_second,
-                "scale": logit_scale_scalar,
-                # "lr": optimizer.param_groups[0]["lr"]
-            }
-            log_data.update({name: val.val for name, val in losses_m.items()})
-
-            for name, val in log_data.items():
-                name = "train/" + name
-                logger.info({name: val, "step": step})
-
-            # resetting batch / data time meters per log window
-            batch_time_m.reset()
-            data_time_m.reset()
-    # end for
+        logs = {"loss": total_loss.item()}
+        progress_bar.set_postfix(**logs)
+        progress_bar.update(1)
 
 
-def evaluate(model, data, epoch, args, logger):
-    metrics = {}
-    device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
-    model.eval()
+def eval(model, criterion, data, epoch, optimizer, args, device, phase):
 
-    dataloader = data["val_loader"]
-    num_samples = 0
-    samples_per_val = len(dataloader) * args.batch_size  # sample size per epoch
-
-    cumulative_loss = 0.0
-    cumulative_gen_loss = 0.0
-    all_image_features, all_text_features = [], []
     with torch.no_grad():
-        batch_size = args.batch_size
-        total_batches = len(dataloader.dataset) // batch_size
-        if len(dataloader.dataset) % batch_size != 0:
-            total_batches += 1
+        model.eval()
 
-        for i, batch in tqdm(enumerate(dataloader), desc="Validation: ", total=total_batches):
+        dataloader = data[phase + "_loader"]
+
+        progress_bar = tqdm(dataloader)
+
+        progress_bar.set_description(f"{phase} Epoch {epoch}")
+
+        res = []
+        for batch in dataloader:
             images, texts = batch
-            images = images.to(device=device, non_blocking=True)
-            texts = texts.to(device=device, non_blocking=True)
+            images = images.to(device=device)
+            texts = texts.to(device=device)
+
             if texts.ndim == 3:
                 texts = texts.squeeze(1)
+
             model_out = model(images, texts)
-            image_features = model_out["image_features"]
-            text_features = model_out["text_features"]
-            logit_scale = model_out["logit_scale"]
-            # print(image_features.shape)
-            # print(text_features.shape)
-            # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
-            # however, system RAM is easily exceeded and compute time becomes problematic
-            all_image_features.append(image_features.cpu())
-            all_text_features.append(text_features.cpu())
-            logit_scale = logit_scale.mean()
-            logits_per_image = logit_scale * image_features @ text_features.t()
-            logits_per_text = logits_per_image.t()
+            losses = criterion(**model_out, output_dict=True)
+            total_loss = sum(losses.values())
+            losses["loss"] = total_loss
 
-            batch_size = images.shape[0]
-            labels = torch.arange(batch_size, device=device).long()
-            total_loss = (  # contrastive loss
-                                 F.cross_entropy(logits_per_image, labels)
-                                 + F.cross_entropy(logits_per_text, labels)
-                         ) / 2
+            logs = {"loss": total_loss.item()}
+            progress_bar.set_postfix(**logs)
+            res.append(logs["loss"])
 
-            gen_loss = maybe_compute_generative_loss(model_out)
+            progress_bar.update(1)
 
-            cumulative_loss += total_loss * batch_size
-            num_samples += batch_size
-
-            if i % 100 == 0:
-                logger.info(
-                    f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                    f"Clip Loss: {cumulative_loss / num_samples:.6f}\t"
-                )
-
-                if gen_loss is not None:
-                    cumulative_gen_loss += gen_loss * batch_size
-                    logger.info(
-                        f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t"
-                    )
-
-        val_metrics = get_clip_metrics(
-            image_features=torch.cat(all_image_features),
-            text_features=torch.cat(all_text_features),
-            logit_scale=logit_scale.cpu(),
-        )
-        loss = cumulative_loss / num_samples
-        metrics.update(
-            {
-                **val_metrics,
-                "clip_val_loss": loss.item(),
-                "epoch": epoch,
-                "num_samples": num_samples,
-            }
-        )
-        if gen_loss is not None:
-            gen_loss = cumulative_gen_loss / num_samples
-            metrics.update({"val_generative_loss": gen_loss.item()})
-
-    logger.info(
-        f"Eval Epoch: {epoch} "
-        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
-    )
-
-    for name, val in metrics.items():
-        logger.info({f"val/{name}": val, "epoch": epoch})
-
-    return metrics
-
-
-def inference(model, data, args, logger):
-    """test on test dataset."""
-    metrics = {}
-    device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
-    model.eval()
-
-    dataloader = data["test_loader"]
-    num_samples = 0
-    samples_per_val = len(dataloader) * args.batch_size  # sample size per epoch
-
-    cumulative_loss = 0.0
-    cumulative_gen_loss = 0.0
-    all_image_features, all_text_features = [], []
-    with torch.no_grad():
-        batch_size = args.batch_size
-        total_batches = len(dataloader.dataset) // batch_size
-        if len(dataloader.dataset) % batch_size != 0:
-            total_batches += 1
-
-        for i, batch in tqdm(enumerate(dataloader), desc="Testing: ", total=total_batches):
-            images, texts = batch
-            images = images.to(device=device, non_blocking=True)
-            texts = texts.to(device=device, non_blocking=True)
-            if texts.ndim == 3:
-                texts = texts.squeeze(1)
-            model_out = model(images, texts)
-            image_features = model_out["image_features"]
-            text_features = model_out["text_features"]
-            logit_scale = model_out["logit_scale"]
-
-            # features are accumulated in CPU tensors, otherwise GPU memory exhausted quickly
-            # however, system RAM is easily exceeded and compute time becomes problematic
-            all_image_features.append(image_features.cpu())
-            all_text_features.append(text_features.cpu())
-            logit_scale = logit_scale.mean()
-            logits_per_image = logit_scale * image_features @ text_features.t()
-            logits_per_text = logits_per_image.t()
-
-            batch_size = images.shape[0]
-            labels = torch.arange(batch_size, device=device).long()
-            total_loss = (  # contrastive loss
-                                 F.cross_entropy(logits_per_image, labels)
-                                 + F.cross_entropy(logits_per_text, labels)
-                         ) / 2
-
-            gen_loss = maybe_compute_generative_loss(model_out)
-
-            cumulative_loss += total_loss * batch_size
-            num_samples += batch_size
-
-            if i % 100 == 0:
-                logger.info(
-                    f"Test : [{num_samples} / {samples_per_val}]\t"
-                    f"Clip Loss: {cumulative_loss / num_samples:.6f}\t"
-                )
-
-                if gen_loss is not None:
-                    cumulative_gen_loss += gen_loss * batch_size
-                    logger.info(
-                        f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t"
-                    )
-
-        val_metrics = get_clip_metrics(
-            image_features=torch.cat(all_image_features),
-            text_features=torch.cat(all_text_features),
-            logit_scale=logit_scale.cpu(),
-        )
-        loss = cumulative_loss / num_samples
-        metrics.update(
-            {**val_metrics, "clip_test_loss": loss.item(), "num_samples": num_samples}
-        )
-        if gen_loss is not None:
-            gen_loss = cumulative_gen_loss / num_samples
-            metrics.update({"test_generative_loss": gen_loss.item()})
-
-    logger.info(
-        f"Test: " + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
-    )
-
-    for name, val in metrics.items():
-        logger.info({f"test/{name}": val})
-
-    return metrics
+        return {"clip_val_loss": np.mean(res)}
 
 
 def init(args):
@@ -396,27 +146,27 @@ def init(args):
     logger.info(args)
 
 
-def eval_best(model, args, data):
+def eval_best(model, args, data, criterion, epoch, optimizer):
     best_checkpoint = torch.load(
         os.path.join("./checkpoints/upstream", "best_model.bin"),
         map_location=torch.device("cpu"),
     )
     model.load_state_dict(best_checkpoint)
     model.to(args.device)
-    test_metric = inference(model, data, args, logger)
+    test_metric = eval(model, criterion, data, epoch, optimizer, args, args.device, "val")
     logger.info("test metric: {}".format(test_metric))
 
 
 def init_model(args):
     model, _, transform = open_clip.create_model_and_transforms(
-        model_name="ViT-B-32", pretrained=args.pretrained_model
+        model_name="coca_ViT-L-14", pretrained=args.pretrained_model
     )
 
     model.to(args.device)
 
     logger.info("model parameters: {}".format(count_trainable_parameters(model)))
 
-    tokenizer = open_clip.get_tokenizer("ViT-B-32")
+    tokenizer = open_clip.get_tokenizer("coca_ViT-L-14")
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr
@@ -445,26 +195,32 @@ def main(args):
     for epoch in range(args.epoch_num):
         logger.info("Start epoch {}".format(epoch))
         print("Start epoch {}".format(epoch))
-        train_one_epoch(model, criterion, data, epoch, optimizer, args, logger)
+        train_one_epoch(model, criterion, data, epoch, optimizer, args, args.device)
         completed_epoch = epoch + 1
 
-        cur_metrics = evaluate(model, data, completed_epoch, args, logger)
+        cur_metrics = eval(model, criterion, data, epoch, optimizer, args, args.device, "val")
+
 
         if cur_metrics["clip_val_loss"] < best_clip_val_loss:
+            print("--------------------enter saving mode--------------------")
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "optimizer": optimizer.state_dict(),
             }
+            print("--------------------saving checkpoints--------------------")
             torch.save(
                 checkpoint_dict,
                 os.path.join("./checkpoints/upstream", "best_states.pt"),
             )
+            print("--------------------saving state_dict--------------------")
             torch.save(
                 model.state_dict(),
                 os.path.join("./checkpoints/upstream", "best_model.bin"),
             )
             best_clip_val_loss = cur_metrics["clip_val_loss"]
-    eval_best(model, args, data)
+
+
+    eval_best(model, args, data, criterion, 20010321, optimizer)
 
 
 if __name__ == "__main__":
@@ -486,7 +242,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=8,
+        default=64,
         help="batch size"
     )
     parser.add_argument(
@@ -501,10 +257,15 @@ if __name__ == "__main__":
         default=100,
         help="log every n steps"
     )
+    # VIT-B-32
+    # huggingface-cli download --resume-download laion/CLIP-ViT-B-32-laion2B-s34B-b79K --local-dir ./CLIP-ViT-B-32-laion2B-s34B-b79K
+    # coca_ViT-L-14
+    # huggingface-cli download --resume-download laion/mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k --local-dir ./mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k
+    # todo : model selection, coca or clip
     parser.add_argument(
         "--pretrained_model",
         type=str,
-        default="/home/work/zhangruixing/CLIP-ViT-B-32-laion2B-s34B-b79K/open_clip_pytorch_model.bin",
+        default="/home/work/zhangruixing/mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k/open_clip_pytorch_model.bin",
         help="pretrained model after running main.py",
     )
     parser.add_argument(

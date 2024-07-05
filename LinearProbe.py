@@ -58,16 +58,20 @@ def build_dataset(args, now_data, mean=False, std=False):
                 temp.append(item[4])
         mean = np.mean(temp)
         std = np.std(temp)
-    embed_dir = f"embeddings/{args.dataset}/"
+    embed_dir = f"embeddings/{args.dataset}/{args.name}/"
     image_embeddings = []
     y = []
     for item in now_data:
         if item[4] < 0 or item[4] > 10000:
             continue
         coord = "%.4lf" % item[0], "%.4lf" % item[3], "%.4lf" % item[2], "%.4lf" % item[1]
-        image_embedding = np.load(embed_dir + f"{coord[0]}_{coord[1]}_{coord[2]}_{coord[3]}.npy")
-        image_embeddings.append(image_embedding)
-        y.append((item[4] - mean) / std)
+        try:
+            image_embedding = np.load(embed_dir + f"{coord[0]}_{coord[1]}_{coord[2]}_{coord[3]}.npy")
+            image_embeddings.append(image_embedding)
+            y.append((item[4] - mean) / std)
+        except:
+            print(f"{coord[0]}_{coord[1]}_{coord[2]}_{coord[3]}.npy not found")
+            continue
     if flag == 0:
         return DataLoader(MyDataSet(image_embeddings, y), batch_size=args.batch_size, shuffle=True)
     else:
@@ -213,7 +217,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--indicator",
         type=str,
-        default="Population",
+        default="Carbon",
         choices=["Carbon", "Population", "Gdp"],
         help="indicator",
     )
@@ -225,7 +229,11 @@ if __name__ == "__main__":
     parser.add_argument("--epoch_num", type=int, default=100000, help="epoch number")
 
     parser.add_argument(
-        "--img_embedding_dim", type=int, default=512, help="image encoder output dim"
+        "--img_embedding_dim", type=int, default=768, help="image encoder output dim"
+    )
+
+    parser.add_argument(
+        "--name", type=str, default="coca_ViT-L-14-test2", help="downstream name"
     )
 
     parser.add_argument("--seed", type=int, default=132, help="random seed")
