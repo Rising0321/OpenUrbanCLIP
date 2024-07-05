@@ -15,3 +15,7 @@ data/task_data/Guangzhou
 data/task_data/Shanghai
 data/task_data/Shenzhen
 
+data/text_pair_data/Beijing
+data/text_pair_data/Guangzhou
+data/text_pair_data/Shanghai
+data/text_pair_data/Shenzhen

@@ -13,7 +13,7 @@ def main():
     parser.add_argument("--slice", type=int, default=0)
     args = parser.parse_args()
 
-    index = 1
+    index = 3
     datasets = ["Beijing", "Shanghai", "Guangzhou", "Shenzhen"]
     dataset = datasets[index]
 
