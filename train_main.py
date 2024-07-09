@@ -17,26 +17,10 @@ from utils.utils import (
     unwrap_model,
     maybe_compute_generative_loss,
     get_clip_metrics,
-    read_files,
+    read_files, load_data, init_model,
 )
 from tqdm import tqdm
 from loguru import logger
-
-
-def load_data(args):
-    datas = []
-    text_dir = f"data/text_pair_data/{args.dataset}"
-    image_dir = f"data/image_data/{args.dataset}/"
-    for root, dirs, files in os.walk(text_dir):
-        for file_name in files:
-            if file_name.find("-") != -1:
-                file_path = os.path.join(root, file_name)
-                file = np.load(file_path)
-                for item in file:
-                    # print(image_dir,item[0])
-                    datas.append([image_dir + item[0], item[1]])
-    return datas
-
 
 def create_datasets(args, transform, tokenizer):
     data = load_data(args)
@@ -156,28 +140,6 @@ def eval_best(model, args, data, criterion, epoch, optimizer):
     logger.info("test metric: {}".format(test_metric))
 
 
-def init_model(args):
-    model, _, transform = open_clip.create_model_and_transforms(
-        model_name=args.model, pretrained=args.pretrained_model
-    )
-
-    model.to(args.device)
-
-    logger.info("model parameters: {}".format(count_trainable_parameters(model)))
-
-    tokenizer = open_clip.get_tokenizer(args.model)
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr
-    )
-
-    criterion = open_clip.CoCaLoss(
-        caption_loss_weight=args.caption_loss_weight,
-        clip_loss_weight=1,
-    )
-
-    return model, transform, tokenizer, optimizer, criterion
-
 
 def main(args):
     init(args)
@@ -261,6 +223,12 @@ if __name__ == "__main__":
     # huggingface-cli download --resume-download laion/CLIP-ViT-B-32-laion2B-s34B-b79K --local-dir ./CLIP-ViT-B-32-laion2B-s34B-b79K
     # coca_ViT-L-14
     # huggingface-cli download --resume-download laion/mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k --local-dir ./mscoco_finetuned_CoCa-ViT-L-14-laion2B-s13B-b90k
+    # dataset
+    # huggingface-cli download --resume-download osv5m/osv5m --local-dir ./osv5m  --repo-type dataset
+    # huggingface-cli download --resume-download BAAI/bge-large-en-v1.5 --local-dir ./bge-large-en-v1.5
+    # huggingface-cli download --resume-download nvidia/NV-Embed-v1 --local-dir ./NV-Embed-v1 --token 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
+    # huggingface-cli download --resume-download sentence-transformers/all-MiniLM-L12-v2 --local-dir ./all-MiniLM-L12-v2
+
     parser.add_argument(
         "--model", type=str, default="coca_ViT-L-14", help="model name"
     )

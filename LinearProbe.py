@@ -10,6 +10,8 @@ from sklearn.metrics import (
     mean_squared_error,
     mean_absolute_error,
     mean_absolute_percentage_error)
+
+from data.datasets import LinearProbeDataSet
 from utils.utils import (
     set_random_seed,
 )
@@ -35,17 +37,7 @@ class MLP(nn.Module):
         # return logits.squeeze(1)
 
 
-class MyDataSet(Dataset):
-    def __init__(self, image_embeddings_, y_):
-        super().__init__()
-        self.img_embeds = image_embeddings_
-        self.y = y_
 
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, index):
-        return self.img_embeds[index], np.float32(self.y[index])
 
 
 def build_dataset(args, now_data, mean=False, std=False):
@@ -73,9 +65,9 @@ def build_dataset(args, now_data, mean=False, std=False):
             print(f"{coord[0]}_{coord[1]}_{coord[2]}_{coord[3]}.npy not found")
             continue
     if flag == 0:
-        return DataLoader(MyDataSet(image_embeddings, y), batch_size=args.batch_size, shuffle=True)
+        return DataLoader(LinearProbeDataSet(image_embeddings, y), batch_size=args.batch_size, shuffle=True)
     else:
-        return DataLoader(MyDataSet(image_embeddings, y), batch_size=args.batch_size, shuffle=True), mean, std
+        return DataLoader(LinearProbeDataSet(image_embeddings, y), batch_size=args.batch_size, shuffle=True), mean, std
 
 
 def create_datasets(args):

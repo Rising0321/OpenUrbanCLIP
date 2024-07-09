@@ -1,6 +1,8 @@
 import json
 import random
 import os
+
+import open_clip
 from PIL import Image
 from torchvision import transforms
 import numpy as np
@@ -9,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+from loguru import logger
 
 
 def read_files(dir_path):
@@ -80,103 +83,39 @@ def get_clip_metrics(image_features, text_features, logit_scale):
     return metrics
 
 
-
-class LinearProbDataset(Dataset):
-    """Dataset for linear probe task.
-
-    Args:
-        data_name (str): name of dataset, Beijing or Shanghai
-        df_data (DataFrame): dataframe of data
-        indicator (str): indicator to predict, CO2, O3, SO2
-        transform (torchvision.transforms): image transform for CoCa
-        mean (float): mean of indicator values
-        std (float): std of indicator values
-        is_test (bool): whether this is test set
-    """
-
-    def __init__(
-            self,
-            data_name="Beijing",
-            df_data=None,
-            indicator="carbon",
-            transform=None,
-            mean=1.0,
-            std=1.0,
-            is_test=False,
-    ):
-        super().__init__()
-
-        self.transform = transform  # image transform for CoCa
-
-        # self.img_paths = []
-        self.img_tensors = []
-        self.y = []
-        for idx, row in df_data.iterrows():
-            # _coordinate = eval(row["Coordinate"])  # tuple
-            # ul to lr
-            # 115.9330_39.8864_115.9479_39.8770.png
-            _image_name = f"{row['lon_min']:.4f}_{row['lat_max']:.4f}_{row['lon_max']:.4f}_{row['lat_min']:.4f}.png"
-            if data_name == "Beijing":
-                _image_path = os.path.join("./data/images/Beijing", _image_name)
-            elif data_name == "Shanghai":
-                _image_path = os.path.join("./data/images/Shanghai", _image_name)
-            else:
-                raise ValueError("data must be Beijing or Shanghai")
-
-            _im = Image.open(_image_path).convert("RGB")
-
-            # im = transform(im).unsqueeze(0)  # [1, 3, 224, 224]
-            _im = transform(_im)  # [3, 224, 224]
-            self.img_tensors.append(_im)
-            if is_test:  # test set no real indicator value
-                self.y.append(0.0)
-            else:
-                self.y.append((row[indicator] - mean) / std)
-
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, index):
-        return self.img_tensors[index], np.float32(self.y[index])
+def load_data(args):
+    datas = []
+    text_dir = f"data/text_pair_data/{args.dataset}"
+    image_dir = f"data/image_data/{args.dataset}/"
+    for root, dirs, files in os.walk(text_dir):
+        for file_name in files:
+            if file_name.find("-") != -1:
+                file_path = os.path.join(root, file_name)
+                file = np.load(file_path)
+                for item in file:
+                    # print(image_dir,item[0])
+                    datas.append([image_dir + item[0], item[1]])
+    return datas
 
 
-class GenerationDataset(Dataset):
-    """Dataset for text generation task.
+def init_model(args):
+    model, _, transform = open_clip.create_model_and_transforms(
+        model_name=args.model, pretrained=args.pretrained_model
+    )
 
-    Args:
-        data_name (str): name of dataset, Beijing or Shanghai
-        df_data (DataFrame): dataframe of data
-        indicator (str): indicator to predict, CO2, O3, SO2
-        transform (torchvision.transforms): image transform for CoCa
-        mean (float): mean of indicator values
-        std (float): std of indicator values
-        is_test (bool): whether this is test set
-    """
+    model.to(args.device)
 
-    def __init__(
-            self,
-            jpg_list=None,
-            transform=None,
-    ):
-        super().__init__()
+    logger.info("model parameters: {}".format(count_trainable_parameters(model)))
 
-        self.jpg_list = jpg_list
-        self.transform = transform  # image transform for CoCa
-        self.img_tensors = []
-        for jpg_path in jpg_list:
-            _im = Image.open(str(jpg_path)).convert("RGB")
-            # im = transform(im).unsqueeze(0)  # [1, 3, 224, 224]
-            _im = transform(_im)  # [3, 224, 224]
-            self.img_tensors.append(_im)
+    tokenizer = open_clip.get_tokenizer(args.model)
 
-    def __len__(self):
-        return len(self.img_tensors)
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=args.lr if "lr" in args else 1e-4
+    )
 
-    def __getitem__(self, index):
-        return self.img_tensors[index]
+    criterion = open_clip.CoCaLoss(
+        caption_loss_weight=args.caption_loss_weight,
+        clip_loss_weight=1,
+    )
 
-
-if __name__ == "__main__":
-    data = json.load(open("data/captions/Beijing_captions.json", "r"))
-    dataset = CoCaDataset(data)
-    print(len(dataset))
+    return model, transform, tokenizer, optimizer, criterion
